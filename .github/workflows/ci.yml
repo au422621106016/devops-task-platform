@@ -10,7 +10,8 @@ jobs:
       steps:
         - name: Checkout source code
           uses: actions/Checkout@v4
-        - name: docker/login-action@v3
+        - name: Login to DockerHub
+          uses: docker/login-action@v3
           with:
             username: ${{ secrets.DOCKER_USERNAME}}
             passworrd: ${{ secrets.DOCKER_PASSWORD}}
