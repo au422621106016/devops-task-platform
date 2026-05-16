@@ -1,0 +1,27 @@
+name: Docker CLI
+on:
+  push:
+    branches: 
+      -main
+
+jobs:
+   build-and-push:
+      runs-on: ubuntu-latest
+      steps:
+        - name: Checkout source code
+          uses: actions/Checkout@v4
+        - name: docker/login-action@v3
+          with:
+            username: ${{ secrets.DOCKER_USERNAME}}
+            passworrd: ${{ secrets.DOCKER_PASSWORD}}
+
+        - name: Build Backend Image
+          run: |
+            docker build -t jsdaya2211/backend:v1 ./backend
+            docker push jsdaya2211/backend:v1
+
+        - name: Build Frontend Image
+          run: |
+            docker build -t jsdaya2211/frontend:v1 ./frontend
+            docker push jsdaya2211/frontend:v1
+         
