@@ -1,0 +1,40 @@
+services:
+
+ frontend:
+  build: ./frontend
+  container_name: frontend
+ 
+ backend:
+   build: ./backend
+   container_name: backend
+ 
+   env_file:
+     - .env
+
+   depends_on:
+     - mysql
+
+ mysql:
+   image: mysql:8
+   container_name: mysql
+   
+   environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: devopsdb
+
+   volumes:
+      - mysql-data:/var/lib/mysql
+
+ nginx:
+   build: ./nginx
+   container_name: nginx
+
+   ports:
+      - "80:80"
+
+   depends_on:
+      - frontend
+      - backend
+
+volumes:
+  mysql-data:

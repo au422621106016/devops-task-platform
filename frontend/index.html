@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+
+    <title>DevOps Task Platform</title>
+
+    <link rel="stylesheet" href="style.css">
+
+</head>
+
+<body>
+
+    <div class="container">
+
+        <h1>DevOps Task Platform</h1>
+
+
+        <!-- AUTH SECTION -->
+
+        <div class="auth-box">
+
+            <input
+                type="text"
+                id="username"
+                placeholder="Username"
+            >
+
+            <input
+                type="password"
+                id="password"
+                placeholder="Password"
+            >
+
+            <button onclick="registerUser()">
+                Register
+            </button>
+
+            <button onclick="loginUser()">
+                Login
+            </button>
+
+        </div>
+
+
+        <!-- TASK SECTION -->
+
+        <div class="task-box">
+
+            <input
+                type="text"
+                id="taskInput"
+                placeholder="Enter Task"
+            >
+
+            <button onclick="addTask()">
+                Add Task
+            </button>
+
+            <button onclick="loadTasks()">
+                Load Tasks
+            </button>
+
+        </div>
+
+
+        <!-- TASK LIST -->
+
+        <ul id="taskList"></ul>
+
+    </div>
+
+
+    <!-- JAVASCRIPT FILE -->
+
+    <script src="script.js"></script>
+
+</body>
+
+</html>
