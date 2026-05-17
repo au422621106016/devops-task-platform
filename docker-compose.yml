@@ -1,38 +1,32 @@
 services:
 
- frontend:
-  image: jsdaya2211/frontend:v1
-  container_name: frontend
- 
- backend:
-   image:jsdaya2211/backend:v1
-   container_name: backend
- 
-   env_file:
-     - .env
+  frontend:
+    image: jsdaya2211/frontend:v1
+    container_name: frontend
 
-   depends_on:
-     - mysql
+  backend:
+    image: jsdaya2211/backend:v1
+    container_name: backend
+    env_file:
+      - .env
+    depends_on:
+      - mysql
 
- mysql:
-   image: mysql:8
-   container_name: mysql
-   
-   environment:
+  mysql:
+    image: mysql:8
+    container_name: mysql
+    environment:
       MYSQL_ROOT_PASSWORD: rootpassword
       MYSQL_DATABASE: devopsdb
-
-   volumes:
+    volumes:
       - mysql-data:/var/lib/mysql
 
- nginx:
-   image: jsdaya2211/nginx:v1
-   container_name: nginx
-
-   ports:
+  nginx:
+    image: jsdaya2211/nginx:v1
+    container_name: nginx
+    ports:
       - "80:80"
-
-   depends_on:
+    depends_on:
       - frontend
       - backend
 
