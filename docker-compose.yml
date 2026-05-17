@@ -1,11 +1,11 @@
 services:
 
  frontend:
-  build: ./frontend
+  image: jsdaya2211/frontend:v1
   container_name: frontend
  
  backend:
-   build: ./backend
+   image:jsdaya2211/backend:v1
    container_name: backend
  
    env_file:
@@ -26,7 +26,7 @@ services:
       - mysql-data:/var/lib/mysql
 
  nginx:
-   build: ./nginx
+   image: jsdaya2211/nginx:v1
    container_name: nginx
 
    ports:
