@@ -1,7 +1,7 @@
 services:
 
   frontend:
-    image: jsdaya2211/frontend:v1
+    image: jsdaya2211/frontend:v2
     container_name: frontend
 
   backend:
