@@ -77,7 +77,9 @@ jobs:
 
             cd devop-task-platform
 
-            git pull origin main
+            git fetch origin 
+
+            git reset --hard origin/main
 
             sudo docker compose down
 
