@@ -33,15 +33,15 @@ jobs:
 
       - name: Build Backend Image
         run: |
-          docker build -t jsdaya2211/backend:v2 ./backend
+          docker build -t jsdaya2211/backend:v3 ./backend
 
       - name: Build Frontend Image
         run: |
-          docker build -t jsdaya2211/frontend:v2 ./frontend
+          docker build -t jsdaya2211/frontend:v3 ./frontend
 
       - name: Build Nginx Image
         run: |
-          docker build -t jsdaya2211/nginx:v1 ./nginx
+          docker build -t jsdaya2211/nginx:v2 ./nginx
 
 
       # -----------------------------------
@@ -50,15 +50,15 @@ jobs:
 
       - name: Push Backend Image
         run: |
-          docker push jsdaya2211/backend:v2
+          docker push jsdaya2211/backend:v3
 
       - name: Push Frontend Image
         run: |
-          docker push jsdaya2211/frontend:v2
+          docker push jsdaya2211/frontend:v3
 
       - name: Push Nginx Image
         run: |
-          docker push jsdaya2211/nginx:v1
+          docker push jsdaya2211/nginx:v2
 
             
       # -----------------------------------

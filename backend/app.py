@@ -1,414 +1,419 @@
+import os
+import time
+import logging
+
+import mysql.connector
+from mysql.connector import Error as MySQLError
+
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from flask_jwt_extended import (
     JWTManager,
     create_access_token,
     jwt_required,
-    get_jwt_identity
+    get_jwt_identity,
 )
-
-from werkzeug.security import (
-    generate_password_hash,
-    check_password_hash
-)
-
+from werkzeug.security import generate_password_hash, check_password_hash
 from dotenv import load_dotenv
 
-import mysql.connector
-import os
-import time
 
-
-# ==========================================
-# LOAD ENVIRONMENT VARIABLES
-# ==========================================
+# ══════════════════════════════════════════════════════════════════
+# ENVIRONMENT & LOGGING
+# ══════════════════════════════════════════════════════════════════
 
 load_dotenv()
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s  [%(levelname)s]  %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+log = logging.getLogger(__name__)
 
-# ==========================================
-# FLASK APPLICATION SETUP
-# ==========================================
+
+# ══════════════════════════════════════════════════════════════════
+# FLASK APPLICATION
+# ══════════════════════════════════════════════════════════════════
 
 app = Flask(__name__)
 
-CORS(app)
+CORS(app, resources={r"/*": {"origins": "*"}})
 
-app.config["JWT_SECRET_KEY"] = os.getenv(
-    "JWT_SECRET_KEY"
-)
+app.config["JWT_SECRET_KEY"] = os.getenv("JWT_SECRET_KEY", "change-me-in-production")
+app.config["JWT_ACCESS_TOKEN_EXPIRES"] = 3600   # 1 hour
 
 jwt = JWTManager(app)
 
 
-# ==========================================
-# MYSQL DATABASE CONNECTION
-# ==========================================
+# ══════════════════════════════════════════════════════════════════
+# DATABASE CONNECTION  (retry until MySQL is ready)
+# ══════════════════════════════════════════════════════════════════
 
-connection = None
-
-while connection is None:
-
-    try:
-
-        connection = mysql.connector.connect(
-            host=os.getenv("MYSQL_HOST"),
-            user=os.getenv("MYSQL_USER"),
-            password=os.getenv("MYSQL_PASSWORD"),
-            database=os.getenv("MYSQL_DATABASE")
-        )
-
-        print("Connected to MySQL")
-
-    except Exception as error:
-
-        print("Waiting for MySQL...", error)
-
-        time.sleep(5)
-
-
-# ==========================================
-# CREATE USERS TABLE
-# ==========================================
-
-cursor = connection.cursor()
-
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS users (
-
-    id INT AUTO_INCREMENT PRIMARY KEY,
-
-    username VARCHAR(255) UNIQUE,
-
-    password VARCHAR(255)
-
-)
-""")
-
-
-# ==========================================
-# CREATE TASKS TABLE
-# ==========================================
-
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS tasks (
-
-    id INT AUTO_INCREMENT PRIMARY KEY,
-
-    title VARCHAR(255),
-
-    status VARCHAR(50),
-
-    user_id INT,
-
-    FOREIGN KEY (user_id)
-    REFERENCES users(id)
-
-)
-""")
-
-connection.commit()
-
-cursor.close()
-
-
-# ==========================================
-# HOME ROUTE
-# ==========================================
-
-@app.route("/")
-def home():
-
-    return jsonify({
-        "message": "DevOps Task Platform API Running"
-    })
-
-
-# ==========================================
-# USER REGISTRATION
-# ==========================================
-
-@app.route("/register", methods=["POST"])
-def register():
-
-    data = request.get_json()
-
-    username = data.get("username")
-
-    password = data.get("password")
-
-    if not username or not password:
-
-        return jsonify({
-            "message": "Username and password required"
-        }), 400
-
-    if len(password) < 6:
-
-        return jsonify({
-            "message": "Password must be at least 6 characters"
-        }), 400
-
-    hashed_password = generate_password_hash(
-        password
+def get_connection():
+    """Return a fresh MySQL connection."""
+    return mysql.connector.connect(
+        host=os.getenv("MYSQL_HOST", "mysql"),
+        user=os.getenv("MYSQL_USER", "root"),
+        password=os.getenv("MYSQL_PASSWORD", ""),
+        database=os.getenv("MYSQL_DATABASE", "devopsdb"),
+        connection_timeout=10,
     )
 
+
+def wait_for_db(retries: int = 15, delay: int = 5):
+    """Block startup until MySQL accepts connections."""
+    for attempt in range(1, retries + 1):
+        try:
+            conn = get_connection()
+            log.info("MySQL connection established.")
+            return conn
+        except MySQLError as err:
+            log.warning("MySQL not ready (attempt %d/%d): %s", attempt, retries, err)
+            time.sleep(delay)
+    raise RuntimeError("Could not connect to MySQL after multiple retries.")
+
+
+connection = wait_for_db()
+
+
+# ══════════════════════════════════════════════════════════════════
+# SCHEMA INITIALISATION
+# ══════════════════════════════════════════════════════════════════
+
+def init_schema():
     cursor = connection.cursor()
-
     try:
-
-        cursor.execute(
-
-            """
-            INSERT INTO users
-            (username, password)
-
-            VALUES (%s, %s)
-            """,
-
-            (username, hashed_password)
-
-        )
-
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id       INT AUTO_INCREMENT PRIMARY KEY,
+                username VARCHAR(80)  NOT NULL UNIQUE,
+                password VARCHAR(255) NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS tasks (
+                id         INT AUTO_INCREMENT PRIMARY KEY,
+                title      VARCHAR(200) NOT NULL,
+                status     ENUM('Pending','In Progress','Completed') DEFAULT 'Pending',
+                user_id    INT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                           ON UPDATE CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        """)
         connection.commit()
-
-        return jsonify({
-            "message": "User registered successfully"
-        }), 201
-
-    except Exception as error:
-
-        return jsonify({
-            "error": str(error)
-        }), 400
-
+        log.info("Database schema verified.")
     finally:
-
         cursor.close()
 
 
-# ==========================================
-# USER LOGIN
-# ==========================================
+init_schema()
+
+
+# ══════════════════════════════════════════════════════════════════
+# HELPERS
+# ══════════════════════════════════════════════════════════════════
+
+def ok(data=None, message=None, status=200):
+    body = {"success": True}
+    if message:
+        body["message"] = message
+    if data is not None:
+        body["data"] = data
+    return jsonify(body), status
+
+
+def fail(message, status=400):
+    return jsonify({"success": False, "message": message}), status
+
+
+def ensure_connection():
+    """Reconnect if the MySQL connection has dropped."""
+    global connection
+    try:
+        connection.ping(reconnect=True, attempts=3, delay=2)
+    except MySQLError:
+        log.warning("Lost DB connection — reconnecting.")
+        connection = get_connection()
+
+
+def validate_json(*required_fields):
+    """Return (data, error_response) tuple."""
+    data = request.get_json(silent=True)
+    if data is None:
+        return None, fail("Request body must be valid JSON.")
+    for field in required_fields:
+        if not data.get(field, "").strip():
+            return None, fail(f"'{field}' is required.")
+    return data, None
+
+
+# ══════════════════════════════════════════════════════════════════
+# JWT ERROR HANDLERS
+# ══════════════════════════════════════════════════════════════════
+
+@jwt.unauthorized_loader
+def missing_token(_err):
+    return fail("Authentication token is missing.", 401)
+
+
+@jwt.invalid_token_loader
+def invalid_token(_err):
+    return fail("Authentication token is invalid.", 401)
+
+
+@jwt.expired_token_loader
+def expired_token(_jwt_header, _jwt_data):
+    return fail("Authentication token has expired. Please log in again.", 401)
+
+
+# ══════════════════════════════════════════════════════════════════
+# HEALTH CHECK
+# ══════════════════════════════════════════════════════════════════
+
+@app.route("/health", methods=["GET"])
+def health():
+    try:
+        ensure_connection()
+        cur = connection.cursor()
+        cur.execute("SELECT 1")
+        cur.fetchone()
+        cur.close()
+        db_status = "connected"
+    except MySQLError:
+        db_status = "unavailable"
+    return ok({"api": "running", "database": db_status})
+
+
+# ══════════════════════════════════════════════════════════════════
+# HOME
+# ══════════════════════════════════════════════════════════════════
+
+@app.route("/", methods=["GET"])
+def home():
+    return ok(message="DevOps Task Platform API is running.")
+
+
+# ══════════════════════════════════════════════════════════════════
+# AUTH — REGISTER
+# ══════════════════════════════════════════════════════════════════
+
+@app.route("/register", methods=["POST"])
+def register():
+    data, err = validate_json("username", "password")
+    if err:
+        return err
+
+    username = data["username"].strip()
+    password = data["password"].strip()
+
+    if len(username) < 3:
+        return fail("Username must be at least 3 characters.")
+    if len(username) > 80:
+        return fail("Username must be 80 characters or fewer.")
+    if len(password) < 6:
+        return fail("Password must be at least 6 characters.")
+
+    hashed = generate_password_hash(password)
+    ensure_connection()
+    cursor = connection.cursor()
+    try:
+        cursor.execute(
+            "INSERT INTO users (username, password) VALUES (%s, %s)",
+            (username, hashed),
+        )
+        connection.commit()
+        log.info("New user registered: %s", username)
+        return ok(message="Account created successfully.")
+    except MySQLError as err:
+        if "Duplicate entry" in str(err):
+            return fail("Username already exists. Please choose another.", 409)
+        log.error("Register error: %s", err)
+        return fail("Registration failed. Please try again.", 500)
+    finally:
+        cursor.close()
+
+
+# ══════════════════════════════════════════════════════════════════
+# AUTH — LOGIN
+# ══════════════════════════════════════════════════════════════════
 
 @app.route("/login", methods=["POST"])
 def login():
+    data, err = validate_json("username", "password")
+    if err:
+        return err
 
-    data = request.get_json()
+    username = data["username"].strip()
+    password = data["password"].strip()
 
-    username = data.get("username")
-
-    password = data.get("password")
-
-    if not username or not password:
-
-        return jsonify({
-            "message": "Username and password required"
-        }), 400
-
+    ensure_connection()
     cursor = connection.cursor(dictionary=True)
+    try:
+        cursor.execute("SELECT * FROM users WHERE username = %s", (username,))
+        user = cursor.fetchone()
+    finally:
+        cursor.close()
 
-    cursor.execute(
+    if not user or not check_password_hash(user["password"], password):
+        return fail("Invalid username or password.", 401)
 
-        """
-        SELECT *
-        FROM users
-        WHERE username=%s
-        """,
-
-        (username,)
-
+    token = create_access_token(identity=str(user["id"]))
+    log.info("User logged in: %s", username)
+    return ok(
+        data={"token": token, "username": username},
+        message="Login successful.",
     )
 
-    user = cursor.fetchone()
 
-    cursor.close()
-
-    if user and check_password_hash(
-        user["password"],
-        password
-    ):
-
-        access_token = create_access_token(
-            identity=str(user["id"])
-        )
-
-        return jsonify({
-            "token": access_token
-        }), 200
-
-    return jsonify({
-        "message": "Invalid credentials"
-    }), 401
-
-
-# ==========================================
-# GET TASKS
-# ==========================================
+# ══════════════════════════════════════════════════════════════════
+# TASKS — GET ALL
+# ══════════════════════════════════════════════════════════════════
 
 @app.route("/tasks", methods=["GET"])
 @jwt_required()
 def get_tasks():
-
-    current_user = get_jwt_identity()
-
+    user_id = get_jwt_identity()
+    ensure_connection()
     cursor = connection.cursor(dictionary=True)
-
-    cursor.execute(
-
-        """
-        SELECT *
-        FROM tasks
-        WHERE user_id=%s
-        """,
-
-        (current_user,)
-
-    )
-
-    tasks = cursor.fetchall()
-
-    cursor.close()
-
-    return jsonify(tasks), 200
+    try:
+        cursor.execute(
+            "SELECT id, title, status, created_at, updated_at "
+            "FROM tasks WHERE user_id = %s ORDER BY created_at DESC",
+            (user_id,),
+        )
+        tasks = cursor.fetchall()
+        # Serialise datetime objects
+        for task in tasks:
+            for key in ("created_at", "updated_at"):
+                if task.get(key):
+                    task[key] = task[key].strftime("%Y-%m-%d %H:%M")
+    finally:
+        cursor.close()
+    return ok(data=tasks)
 
 
-# ==========================================
-# ADD TASK
-# ==========================================
+# ══════════════════════════════════════════════════════════════════
+# TASKS — ADD
+# ══════════════════════════════════════════════════════════════════
 
 @app.route("/tasks", methods=["POST"])
 @jwt_required()
 def add_task():
+    user_id = get_jwt_identity()
+    data, err = validate_json("title")
+    if err:
+        return err
 
-    current_user = get_jwt_identity()
+    title = data["title"].strip()
+    if len(title) > 200:
+        return fail("Task title must be 200 characters or fewer.")
 
-    data = request.get_json()
-
-    title = data.get("title")
-
-    if not title:
-
-        return jsonify({
-            "message": "Task title required"
-        }), 400
-
+    ensure_connection()
     cursor = connection.cursor()
+    try:
+        cursor.execute(
+            "INSERT INTO tasks (title, status, user_id) VALUES (%s, 'Pending', %s)",
+            (title, user_id),
+        )
+        connection.commit()
+        task_id = cursor.lastrowid
+    finally:
+        cursor.close()
 
-    cursor.execute(
-
-        """
-        INSERT INTO tasks
-        (title, status, user_id)
-
-        VALUES (%s, %s, %s)
-        """,
-
-        (title, "Pending", current_user)
-
-    )
-
-    connection.commit()
-
-    cursor.close()
-
-    return jsonify({
-        "message": "Task added"
-    }), 201
+    log.info("Task %d added by user %s", task_id, user_id)
+    return ok(data={"id": task_id}, message="Task added successfully.", status=201)
 
 
-# ==========================================
-# UPDATE TASK
-# ==========================================
+# ══════════════════════════════════════════════════════════════════
+# TASKS — UPDATE
+# ══════════════════════════════════════════════════════════════════
 
-@app.route("/tasks/<int:id>", methods=["PUT"])
+VALID_STATUSES = {"Pending", "In Progress", "Completed"}
+
+@app.route("/tasks/<int:task_id>", methods=["PUT"])
 @jwt_required()
-def update_task(id):
+def update_task(task_id):
+    user_id = get_jwt_identity()
+    data, err = validate_json("title", "status")
+    if err:
+        return err
 
-    current_user = get_jwt_identity()
+    title  = data["title"].strip()
+    status = data["status"].strip()
 
-    data = request.get_json()
+    if status not in VALID_STATUSES:
+        return fail(f"Status must be one of: {', '.join(VALID_STATUSES)}.")
+    if len(title) > 200:
+        return fail("Task title must be 200 characters or fewer.")
 
-    title = data.get("title")
-
-    status = data.get("status")
-
-    if not title or not status:
-
-        return jsonify({
-            "message": "Title and status required"
-        }), 400
-
+    ensure_connection()
     cursor = connection.cursor()
+    try:
+        cursor.execute(
+            "UPDATE tasks SET title = %s, status = %s "
+            "WHERE id = %s AND user_id = %s",
+            (title, status, task_id, user_id),
+        )
+        connection.commit()
+        if cursor.rowcount == 0:
+            return fail("Task not found or access denied.", 404)
+    finally:
+        cursor.close()
 
-    cursor.execute(
-
-        """
-        UPDATE tasks
-
-        SET
-            title=%s,
-            status=%s
-
-        WHERE
-            id=%s
-            AND user_id=%s
-        """,
-
-        (title, status, id, current_user)
-
-    )
-
-    connection.commit()
-
-    cursor.close()
-
-    return jsonify({
-        "message": "Task updated"
-    }), 200
+    return ok(message="Task updated successfully.")
 
 
-# ==========================================
-# DELETE TASK
-# ==========================================
+# ══════════════════════════════════════════════════════════════════
+# TASKS — DELETE
+# ══════════════════════════════════════════════════════════════════
 
-@app.route("/tasks/<int:id>", methods=["DELETE"])
+@app.route("/tasks/<int:task_id>", methods=["DELETE"])
 @jwt_required()
-def delete_task(id):
-
-    current_user = get_jwt_identity()
-
+def delete_task(task_id):
+    user_id = get_jwt_identity()
+    ensure_connection()
     cursor = connection.cursor()
+    try:
+        cursor.execute(
+            "DELETE FROM tasks WHERE id = %s AND user_id = %s",
+            (task_id, user_id),
+        )
+        connection.commit()
+        if cursor.rowcount == 0:
+            return fail("Task not found or access denied.", 404)
+    finally:
+        cursor.close()
 
-    cursor.execute(
-
-        """
-        DELETE FROM tasks
-        WHERE
-            id=%s
-            AND user_id=%s
-        """,
-
-        (id, current_user)
-
-    )
-
-    connection.commit()
-
-    cursor.close()
-
-    return jsonify({
-        "message": "Task deleted"
-    }), 200
+    log.info("Task %d deleted by user %s", task_id, user_id)
+    return ok(message="Task deleted successfully.")
 
 
-# ==========================================
-# RUN APPLICATION
-# ==========================================
+# ══════════════════════════════════════════════════════════════════
+# GLOBAL ERROR HANDLERS
+# ══════════════════════════════════════════════════════════════════
+
+@app.errorhandler(404)
+def not_found(_e):
+    return fail("The requested endpoint does not exist.", 404)
+
+
+@app.errorhandler(405)
+def method_not_allowed(_e):
+    return fail("HTTP method not allowed for this endpoint.", 405)
+
+
+@app.errorhandler(500)
+def internal_error(e):
+    log.error("Unhandled server error: %s", e)
+    return fail("An unexpected server error occurred.", 500)
+
+
+# ══════════════════════════════════════════════════════════════════
+# ENTRY POINT
+# ══════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
-
-    app.run(
-        host="0.0.0.0",
-        port=5000
-    )
+    app.run(host="0.0.0.0", port=5000, debug=False)

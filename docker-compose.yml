@@ -1,11 +1,11 @@
 services:
 
   frontend:
-    image: jsdaya2211/frontend:v2
+    image: jsdaya2211/frontend:v3
     container_name: frontend
 
   backend:
-    image: jsdaya2211/backend:v2
+    image: jsdaya2211/backend:v3
     container_name: backend
     env_file:
       - .env
@@ -22,7 +22,7 @@ services:
       - mysql-data:/var/lib/mysql
 
   nginx:
-    image: jsdaya2211/nginx:v1
+    image: jsdaya2211/nginx:v2
     container_name: nginx
     ports:
       - "80:80"
