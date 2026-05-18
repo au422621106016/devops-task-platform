@@ -33,7 +33,7 @@
 - **Docker Hub** — versioned image registry (v1 → v2 → v3)
 - **SSH key authentication** — secure, passwordless automated deployment
 - **Nginx** — reverse proxy routing frontend and backend through a single port
-- **Production UI** — professional dark-themed frontend built for portfolio credibility
+- **Portfolio UI** — professional dark-themed frontend built for portfolio credibility
 
 ---
 
@@ -59,7 +59,7 @@
 
 ```
                         ┌─────────────────────────────────────┐
-                        │          AWS EC2 (t3.medium)         │
+                        │          AWS EC2 Instance            │
                         │         Ubuntu LTS                   │
                         │                                      │
   User Browser ──HTTP──►│  ┌──────────────────────────────┐   │
@@ -128,9 +128,17 @@ Developer pushes code
 | **Reverse Proxy** | Nginx (Alpine) | Routing & static file serving |
 | **CI/CD** | GitHub Actions | Automated build & deploy pipeline |
 | **Registry** | Docker Hub | Versioned image storage |
-| **Cloud** | AWS EC2 (t3.medium) | Production hosting |
+| **Cloud** | AWS EC2 (Ubuntu LTS) | Cloud hosting |
 | **Auth** | SSH RSA 4096-bit keys | Secure EC2 access |
 | **Secrets** | GitHub Repository Secrets | Credential management |
+
+---
+
+## 🏷️ GitHub Repository Topics
+
+Add these topics to your repository (**Settings → Topics**) to improve discoverability:
+
+`devops` `docker` `aws` `ec2` `github-actions` `cicd` `flask` `nginx` `mysql` `docker-compose` `python`
 
 ---
 
@@ -203,33 +211,40 @@ docker ps                         # View running containers
 ## 🐳 Docker Compose
 
 ```yaml
-# docker-compose.yml (structure overview)
-version: '3.8'
-
 services:
-  mysql:
-    image: mysql:8
-    environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-      MYSQL_DATABASE: ${MYSQL_DATABASE}
-
-  backend:
-    build: ./backend
-    depends_on:
-      - mysql
-    environment:
-      DATABASE_URL: mysql+pymysql://root:${MYSQL_ROOT_PASSWORD}@mysql/${MYSQL_DATABASE}
 
   frontend:
-    build: ./frontend
+    image: jsdaya2211/frontend:v3
+    container_name: frontend
+
+  backend:
+    image: jsdaya2211/backend:v3
+    container_name: backend
+    env_file:
+      - .env
+    depends_on:
+      - mysql
+
+  mysql:
+    image: mysql:8
+    container_name: mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: devopsdb
+    volumes:
+      - mysql-data:/var/lib/mysql
 
   nginx:
-    build: ./nginx
+    image: jsdaya2211/nginx:v2
+    container_name: nginx
     ports:
       - "80:80"
     depends_on:
       - frontend
       - backend
+
+volumes:
+  mysql-data:
 ```
 
 All containers communicate on the `devops-task-platform_default` Docker network.
@@ -250,11 +265,27 @@ Never commit the `.env` file — it is listed in `.gitignore`.
 
 ---
 
+## 🔒 Security
+
+Never push sensitive files publicly. Ensure your `.gitignore` includes at minimum:
+
+```
+.env
+*.pem
+id_rsa
+id_rsa.pub
+.ssh/
+```
+
+The GitHub Actions pipeline handles all credentials exclusively through GitHub Repository Secrets — no secrets are ever written into code, logs, or committed files.
+
+---
+
 ## ☁️ EC2 Deployment
 
 **Instance configuration:**
 - AMI: Ubuntu LTS
-- Instance Type: t3.medium (2 vCPU, 4GB RAM)
+- Instance Type: t2.micro / t3.micro (verify your actual instance)
 - Region: US East (N. Virginia)
 - Security Group: HTTP (80), SSH (22)
 
@@ -265,7 +296,7 @@ Never commit the `.env` file — it is listed in `.gitignore`.
 ssh -i /path/to/key.pem ubuntu@<EC2-PUBLIC-IP>
 
 # Install Docker
-sudo apt update && sudo apt install docker.io docker-compose -y
+sudo apt update && sudo apt install docker.io docker-compose-plugin -y
 sudo systemctl enable docker
 sudo usermod -aG docker ubuntu
 
@@ -316,43 +347,73 @@ name: Full CI/CD Pipeline
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout source code
+        uses: actions/checkout@v4
 
+      # -----------------------------------
+      # Docker Hub Login
+      # -----------------------------------
       - name: Login to Docker Hub
         uses: docker/login-action@v2
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build Images
+      # -----------------------------------
+      # Build Images
+      # -----------------------------------
+      - name: Build Backend Image
         run: |
-          docker build -t ${{ secrets.DOCKER_USERNAME }}/backend:latest ./backend
-          docker build -t ${{ secrets.DOCKER_USERNAME }}/frontend:latest ./frontend
-          docker build -t ${{ secrets.DOCKER_USERNAME }}/nginx:latest ./nginx
+          docker build -t jsdaya2211/backend:v3 ./backend
 
-      - name: Push Images
+      - name: Build Frontend Image
         run: |
-          docker push ${{ secrets.DOCKER_USERNAME }}/backend:latest
-          docker push ${{ secrets.DOCKER_USERNAME }}/frontend:latest
-          docker push ${{ secrets.DOCKER_USERNAME }}/nginx:latest
+          docker build -t jsdaya2211/frontend:v3 ./frontend
 
+      - name: Build Nginx Image
+        run: |
+          docker build -t jsdaya2211/nginx:v2 ./nginx
+
+      # -----------------------------------
+      # Push Images
+      # -----------------------------------
+      - name: Push Backend Image
+        run: |
+          docker push jsdaya2211/backend:v3
+
+      - name: Push Frontend Image
+        run: |
+          docker push jsdaya2211/frontend:v3
+
+      - name: Push Nginx Image
+        run: |
+          docker push jsdaya2211/nginx:v2
+
+      # -----------------------------------
+      # Deploy To EC2
+      # -----------------------------------
       - name: Deploy to EC2
-        uses: appleboy/ssh-action@v0.1.6
+        uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
-            cd ~/devops-task-platform
-            docker compose pull
-            docker compose up -d
+            cd devops-task-platform
+            git fetch origin
+            git reset --hard origin/main
+            sudo docker compose down
+            sudo docker compose pull
+            sudo docker compose up -d
+            sudo docker ps
 ```
 
 | Step | Duration |
@@ -378,10 +439,24 @@ The application is deployed to **AWS EC2** — [Live Demo Coming Soon]
 
 ## 📸 Screenshots
 
-### 🖥️ Local Docker Build
-> Full 28/28 steps completed — `docker compose build --no-cache`
+### 📊 Live Dashboard on EC2
+> Dashboard running live on EC2 — task addition, status updates all functional
 
-![Docker Compose Build](./screenshots/01-docker-compose-build.png)
+![Live Dashboard EC2](./screenshots/19-live-dashboard-ec2.png)
+
+---
+
+### ✅ GitHub Actions — Pipeline Success
+> Workflow run complete — Status: **Success**, Duration: **41s**
+
+![GitHub Actions Success](./screenshots/20-github-actions-success.png)
+
+---
+
+### 📋 GitHub Actions — Full Job Breakdown
+> All steps green: Checkout → Login → Build (×3) → Push (×3) → Deploy to EC2
+
+![GitHub Actions Job Detail](./screenshots/21-github-actions-job-detail.png)
 
 ---
 
@@ -399,10 +474,24 @@ The application is deployed to **AWS EC2** — [Live Demo Coming Soon]
 
 ---
 
-### 📊 Dashboard — Tasks View
-> Live dashboard with stat cards, filter tabs, and color-coded status badges
+### 🔐 Live Login Page on EC2
+> Professional dark login page served via Nginx on EC2 public IP
 
-![Dashboard Pending](./screenshots/04-dashboard-pending.png)
+![Live Login EC2](./screenshots/18-live-login-ec2.png)
+
+---
+
+### ✅ EC2 Instance Running
+> Instance Status: Running, us-east-1c
+
+![EC2 Running](./screenshots/14-ec2-running.png)
+
+---
+
+### 🖥️ Local Docker Build
+> Full 28/28 steps completed — `docker compose build --no-cache`
+
+![Docker Compose Build](./screenshots/01-docker-compose-build.png)
 
 ---
 
@@ -441,45 +530,10 @@ The application is deployed to **AWS EC2** — [Live Demo Coming Soon]
 
 ---
 
-### ✅ EC2 Instance Running
-> t3.medium instance, Status: Running, us-east-1c
-
-![EC2 Running](./screenshots/14-ec2-running.png)
-
----
-
 ### 🔒 GitHub Repository Secrets
 > 5 secrets configured: DOCKER_PASSWORD, DOCKER_USERNAME, EC2_HOST, EC2_SSH_KEY, EC2_USER
 
 ![GitHub Secrets](./screenshots/17-github-secrets.png)
-
----
-
-### 🔐 Live Login Page on EC2
-> Professional dark login page served via Nginx on EC2 public IP
-
-![Live Login EC2](./screenshots/18-live-login-ec2.png)
-
----
-
-### 📊 Live Dashboard on EC2
-> Dashboard running live on EC2 — task addition, status updates all functional
-
-![Live Dashboard EC2](./screenshots/19-live-dashboard-ec2.png)
-
----
-
-### ✅ GitHub Actions — Pipeline Success
-> Workflow run complete — Status: **Success**, Duration: **41s**
-
-![GitHub Actions Success](./screenshots/20-github-actions-success.png)
-
----
-
-### 📋 GitHub Actions — Full Job Breakdown
-> All steps green: Checkout → Login → Build (×3) → Push (×3) → Deploy to EC2
-
-![GitHub Actions Job Detail](./screenshots/21-github-actions-job-detail.png)
 
 ---
 
@@ -503,8 +557,12 @@ The application is deployed to **AWS EC2** — [Live Demo Coming Soon]
 - [ ] Docker health checks in Compose for reliable startup ordering
 - [ ] Separate `docker-compose.prod.yml` and `docker-compose.dev.yml`
 - [ ] Automated tests in CI before the build step
-- [ ] Terraform IaC for reproducible infrastructure
-- [ ] Centralized logging (ELK stack or CloudWatch)
+- [ ] **Terraform** — IaC for reproducible, version-controlled infrastructure provisioning
+- [ ] **Ansible** — configuration management and automated EC2 setup
+- [ ] **Kubernetes** — container orchestration for multi-replica deployments
+- [ ] **Monitoring & Logging** — centralized observability with ELK stack or CloudWatch
+- [ ] **Python automation scripts** — deployment helpers, health checks, and tooling
+- [ ] **Cloud networking** — VPC, subnets, security groups, load balancers
 - [ ] Slack/email notifications on pipeline success or failure
 
 ---
